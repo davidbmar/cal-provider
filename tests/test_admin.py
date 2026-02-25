@@ -108,3 +108,72 @@ class TestSaveConfig:
         data = resp.json()
         assert "claude_config" in data
         assert "mcpServers" in data["claude_config"]
+
+
+class TestDashboardAPI:
+    @pytest.fixture(autouse=True)
+    def setup_provider(self, client):
+        """Pre-configure a mock provider in the admin app."""
+        import cal_provider.admin.app as admin_app
+
+        mock = MagicMock()
+        mock.list_calendars = AsyncMock(return_value=[
+            CalendarInfo(id="primary", name="Main", primary=True),
+        ])
+        mock.get_events = AsyncMock(return_value=[])
+        mock.get_available_slots = AsyncMock(return_value=[])
+        mock.create_event = AsyncMock(return_value={
+            "event_id": "test-evt-1", "status": "confirmed"
+        })
+        mock.cancel_event = AsyncMock(return_value=True)
+
+        admin_app._provider = mock
+        admin_app._provider_config = {
+            "provider_name": "google",
+            "calendar_id": "primary",
+        }
+        yield
+        admin_app._provider = None
+        admin_app._provider_config = {}
+
+    def test_list_calendars(self, client):
+        resp = client.get("/api/calendars")
+        assert resp.status_code == 200
+        assert len(resp.json()["calendars"]) == 1
+
+    def test_get_events(self, client):
+        resp = client.get("/api/events", params={
+            "calendar_id": "primary",
+            "start": "2026-03-15T09:00:00+00:00",
+            "end": "2026-03-15T18:00:00+00:00",
+        })
+        assert resp.status_code == 200
+        assert "events" in resp.json()
+
+    def test_get_available_slots(self, client):
+        resp = client.get("/api/available-slots", params={
+            "calendar_id": "primary",
+            "start": "2026-03-15T09:00:00+00:00",
+            "end": "2026-03-15T18:00:00+00:00",
+        })
+        assert resp.status_code == 200
+        assert "slots" in resp.json()
+
+    def test_test_event(self, client):
+        resp = client.post("/api/test-event", json={
+            "calendar_id": "primary",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["created_event_id"] == "test-evt-1"
+        assert data["cancelled"] is True
+
+    def test_not_configured_returns_error(self, client):
+        """API calls before setup return helpful error."""
+        import cal_provider.admin.app as admin_app
+        admin_app._provider = None
+
+        resp = client.get("/api/calendars")
+        assert resp.status_code == 200
+        assert resp.json()["error"] is not None

@@ -7,6 +7,7 @@ Or: uvicorn cal_provider.admin.app:app --port 8100
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
@@ -15,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from cal_provider.models import CalendarEvent
 from cal_provider.registry import get_provider
 
 app = FastAPI(title="cal-provider admin")
@@ -148,6 +150,125 @@ async def save_config(req: SaveConfigRequest):
         "claude_config": claude_config,
     }
 
+
+# ---------------------------------------------------------------------------
+# Dashboard API helpers
+# ---------------------------------------------------------------------------
+
+def _require_provider():
+    """Return provider or error dict."""
+    if _provider is None:
+        return None, {"error": "Not configured. Run the setup wizard first."}
+    return _provider, None
+
+
+# ---------------------------------------------------------------------------
+# GET /api/calendars
+# ---------------------------------------------------------------------------
+
+@app.get("/api/calendars")
+async def list_calendars():
+    provider, err = _require_provider()
+    if err:
+        return err
+    calendars = await provider.list_calendars()
+    return {
+        "calendars": [
+            {"id": c.id, "name": c.name, "primary": c.primary, "description": c.description}
+            for c in calendars
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/events
+# ---------------------------------------------------------------------------
+
+@app.get("/api/events")
+async def get_events(calendar_id: str, start: str, end: str):
+    provider, err = _require_provider()
+    if err:
+        return err
+    events = await provider.get_events(
+        calendar_id,
+        datetime.fromisoformat(start),
+        datetime.fromisoformat(end),
+    )
+    return {
+        "events": [
+            {
+                "summary": e.summary,
+                "start": e.start.isoformat(),
+                "end": e.end.isoformat(),
+                "location": e.location,
+                "attendees": e.attendees,
+            }
+            for e in events
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/available-slots
+# ---------------------------------------------------------------------------
+
+@app.get("/api/available-slots")
+async def get_available_slots(
+    calendar_id: str, start: str, end: str, duration_minutes: int = 60
+):
+    provider, err = _require_provider()
+    if err:
+        return err
+    slots = await provider.get_available_slots(
+        calendar_id,
+        datetime.fromisoformat(start),
+        datetime.fromisoformat(end),
+        duration_minutes,
+    )
+    return {
+        "slots": [
+            {"start": s.start.isoformat(), "end": s.end.isoformat(), "duration_minutes": s.duration_minutes}
+            for s in slots
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/test-event
+# ---------------------------------------------------------------------------
+
+class TestEventRequest(BaseModel):
+    calendar_id: str
+
+
+@app.post("/api/test-event")
+async def test_event(req: TestEventRequest):
+    provider, err = _require_provider()
+    if err:
+        return err
+    now = datetime.now(tz=timezone.utc) + timedelta(days=1)
+    event = CalendarEvent(
+        summary="[cal-provider test] Delete me",
+        start=now,
+        end=now + timedelta(minutes=15),
+        description="Automatically created by cal-provider admin. Safe to delete.",
+    )
+    try:
+        result = await provider.create_event(req.calendar_id, event)
+        event_id = result["event_id"]
+        cancelled = await provider.cancel_event(req.calendar_id, event_id)
+        return {
+            "success": True,
+            "created_event_id": event_id,
+            "cancelled": cancelled,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 def main():
     """CLI entry point for cal-provider-admin."""
