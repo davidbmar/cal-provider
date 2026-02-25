@@ -1,2 +1,0 @@
-[console_scripts]
-cal-provider-mcp = cal_provider.mcp.server:main
