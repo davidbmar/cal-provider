@@ -1,0 +1,14 @@
+
+[all]
+cal-provider[caldav,google,mcp]
+
+[caldav]
+caldav>=2.0
+icalendar>=5.0
+
+[google]
+google-api-python-client>=2.100
+google-auth>=2.20
+
+[mcp]
+mcp[cli]>=1.0

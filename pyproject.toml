@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cal-provider"
+version = "0.1.0"
+description = "Multi-backend calendar provider library with optional MCP server"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    {name = "David Mar"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Scheduling",
+]
+
+[project.optional-dependencies]
+google = ["google-api-python-client>=2.100", "google-auth>=2.20"]
+caldav = ["caldav>=2.0", "icalendar>=5.0"]
+mcp = ["mcp[cli]>=1.0"]
+all = ["cal-provider[google,caldav,mcp]"]
+
+[project.scripts]
+cal-provider-mcp = "cal_provider.mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
