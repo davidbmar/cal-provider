@@ -197,3 +197,44 @@ class TestPageRoutes:
     def test_config_page_loads(self, client):
         resp = client.get("/config")
         assert resp.status_code == 200
+
+
+class TestWizardFlow:
+    def test_full_setup_flow(self, client, tmp_path):
+        """Simulate the complete setup wizard: test connection -> save config -> verify status."""
+        import cal_provider.admin.app as admin_app
+
+        mock_provider = MagicMock()
+        mock_provider.list_calendars = AsyncMock(return_value=[
+            CalendarInfo(id="primary", name="Main", primary=True),
+        ])
+
+        try:
+            with patch("cal_provider.admin.app.get_provider", return_value=mock_provider):
+                # Step 1: Test connection
+                resp = client.post("/api/test-connection", json={
+                    "provider": "google",
+                    "google_service_account_json": "/fake/sa.json",
+                })
+                assert resp.json()["success"] is True
+
+            # Step 2: Verify status shows configured
+            resp = client.get("/api/status")
+            assert resp.json()["configured"] is True
+            assert resp.json()["provider"] == "google"
+
+            # Step 3: Save config
+            resp = client.post("/api/save-config", json={
+                "provider": "google",
+                "google_service_account_json": "/fake/sa.json",
+                "output_dir": str(tmp_path),
+            })
+            assert resp.json()["success"] is True
+            assert (tmp_path / ".env").exists()
+
+            # Step 4: Verify .env content
+            content = (tmp_path / ".env").read_text()
+            assert "CAL_PROVIDER=google" in content
+        finally:
+            admin_app._provider = None
+            admin_app._provider_config = {}
