@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -29,6 +30,30 @@ templates = Jinja2Templates(directory=_HERE / "templates")
 # In-process state (not persisted — lives for the lifetime of the server)
 _provider = None
 _provider_config: dict = {}
+
+
+# ---------------------------------------------------------------------------
+# Page routes
+# ---------------------------------------------------------------------------
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/setup")
+
+
+@app.get("/setup")
+async def setup_page(request: Request):
+    return templates.TemplateResponse(request, "setup.html")
+
+
+@app.get("/dashboard")
+async def dashboard_page(request: Request):
+    return templates.TemplateResponse(request, "dashboard.html")
+
+
+@app.get("/config")
+async def config_page(request: Request):
+    return templates.TemplateResponse(request, "config.html")
 
 
 @app.get("/api/status")

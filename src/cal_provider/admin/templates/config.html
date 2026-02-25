@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Config - cal-provider admin{% endblock %}
+
+{% block content %}
+<h1 class="mb-2" style="font-size:1.3rem;">Configuration</h1>
+
+<div class="card" id="config-card">
+    <div id="config-not-configured" class="hidden">
+        <p class="text-muted">
+            No provider configured yet.
+            <a href="/setup">Run the setup wizard</a> first.
+        </p>
+    </div>
+
+    <div id="config-content" class="hidden">
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab(this, 'cfg-env')">Environment Variables</button>
+            <button class="tab" onclick="switchTab(this, 'cfg-dotenv')">.env File</button>
+            <button class="tab" onclick="switchTab(this, 'cfg-claude')">Claude Code Config</button>
+        </div>
+
+        <div class="tab-content active" id="cfg-env">
+            <div class="code-block-wrapper">
+                <button class="btn-copy" onclick="copyCode('code-cfg-env')">Copy</button>
+                <pre><code id="code-cfg-env"></code></pre>
+            </div>
+        </div>
+
+        <div class="tab-content" id="cfg-dotenv">
+            <div class="code-block-wrapper">
+                <button class="btn-copy" onclick="copyCode('code-cfg-dotenv')">Copy</button>
+                <pre><code id="code-cfg-dotenv"></code></pre>
+            </div>
+        </div>
+
+        <div class="tab-content" id="cfg-claude">
+            <div class="code-block-wrapper">
+                <button class="btn-copy" onclick="copyCode('code-cfg-claude')">Copy</button>
+                <pre><code id="code-cfg-claude"></code></pre>
+            </div>
+        </div>
+    </div>
+
+    <div id="config-loading" class="text-muted">Loading configuration...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', loadConfig);
+
+async function loadConfig() {
+    try {
+        const resp = await fetch('/api/status');
+        const data = await resp.json();
+
+        document.getElementById('config-loading').classList.add('hidden');
+
+        if (!data.configured) {
+            document.getElementById('config-not-configured').classList.remove('hidden');
+            return;
+        }
+
+        document.getElementById('config-content').classList.remove('hidden');
+
+        const provider = data.provider;
+        const calId = data.calendar_id || '';
+
+        // Build env lines from known state
+        let envLines = [`CAL_PROVIDER=${provider}`];
+        if (provider === 'google') {
+            envLines.push(`GOOGLE_SERVICE_ACCOUNT_JSON=<path-to-service-account.json>`);
+        } else if (provider === 'caldav') {
+            envLines.push(`CALDAV_URL=<your-caldav-url>`);
+            envLines.push(`CALDAV_USERNAME=<your-username>`);
+            envLines.push(`CALDAV_PASSWORD=<your-password>`);
+        }
+
+        // Environment variables (export)
+        document.getElementById('code-cfg-env').textContent =
+            envLines.map(l => 'export ' + l).join('\n');
+
+        // .env file
+        document.getElementById('code-cfg-dotenv').textContent =
+            envLines.join('\n');
+
+        // Claude Code config
+        const envBlock = {};
+        envLines.forEach(l => {
+            const [k, ...rest] = l.split('=');
+            envBlock[k] = rest.join('=');
+        });
+        const claudeConfig = {
+            mcpServers: {
+                calendar: {
+                    command: 'cal-provider-mcp',
+                    env: envBlock,
+                }
+            }
+        };
+        document.getElementById('code-cfg-claude').textContent =
+            JSON.stringify(claudeConfig, null, 2);
+
+    } catch (e) {
+        document.getElementById('config-loading').textContent = 'Failed to load: ' + e.message;
+    }
+}
+
+// ── Tab switching ──────────────────────────────────────────
+function switchTab(tabEl, contentId) {
+    const parent = tabEl.closest('.card');
+    parent.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    parent.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tabEl.classList.add('active');
+    document.getElementById(contentId).classList.add('active');
+}
+
+// ── Copy to clipboard ──────────────────────────────────────
+function copyCode(elementId) {
+    const text = document.getElementById(elementId).textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector(`#${elementId}`).closest('.code-block-wrapper').querySelector('.btn-copy');
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    });
+}
+</script>
+{% endblock %}

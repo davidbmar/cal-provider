@@ -177,3 +177,23 @@ class TestDashboardAPI:
         resp = client.get("/api/calendars")
         assert resp.status_code == 200
         assert resp.json()["error"] is not None
+
+
+class TestPageRoutes:
+    def test_setup_page_loads(self, client):
+        resp = client.get("/setup")
+        assert resp.status_code == 200
+        assert "cal-provider" in resp.text.lower()
+
+    def test_root_redirects_to_setup(self, client):
+        resp = client.get("/", follow_redirects=False)
+        assert resp.status_code in (302, 307)
+
+    def test_dashboard_page_loads(self, client):
+        resp = client.get("/dashboard")
+        assert resp.status_code == 200
+        assert "dashboard" in resp.text.lower()
+
+    def test_config_page_loads(self, client):
+        resp = client.get("/config")
+        assert resp.status_code == 200

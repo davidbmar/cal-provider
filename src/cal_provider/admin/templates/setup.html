@@ -1,0 +1,358 @@
+{% extends "base.html" %}
+{% block title %}Setup - cal-provider admin{% endblock %}
+
+{% block content %}
+<h1 class="mb-2" style="font-size:1.3rem;">Setup Wizard</h1>
+
+<!-- Step indicators -->
+<div class="step-indicator">
+    <div class="step-dot active" id="dot-1">1</div>
+    <div class="step-dot" id="dot-2">2</div>
+    <div class="step-dot" id="dot-3">3</div>
+    <div class="step-dot" id="dot-4">4</div>
+</div>
+
+<!-- Step 1: Choose Provider -->
+<div class="card wizard-step active" id="step-1">
+    <h2>Choose Provider</h2>
+    <p class="text-muted mb-2">Select the calendar backend you want to connect.</p>
+
+    <div class="radio-group">
+        <label>
+            <input type="radio" name="provider" value="google" checked>
+            Google Calendar
+        </label>
+        <label>
+            <input type="radio" name="provider" value="caldav">
+            CalDAV
+        </label>
+    </div>
+
+    <div id="desc-google" class="text-muted mb-2">
+        Google Calendar via a service account JSON key file.
+        You will need: a GCP project, a service account, and a downloaded JSON key.
+    </div>
+    <div id="desc-caldav" class="text-muted mb-2 hidden">
+        CalDAV protocol (iCloud, Nextcloud, Fastmail, and others).
+        You will need: the CalDAV server URL, your username, and an app-specific password.
+    </div>
+
+    <button class="btn btn-primary" onclick="goToStep(2)">Next</button>
+</div>
+
+<!-- Step 2: Enter Credentials -->
+<div class="card wizard-step" id="step-2">
+    <h2>Enter Credentials</h2>
+
+    <!-- Google fields -->
+    <div id="fields-google">
+        <label for="google-sa-path">Service Account JSON path</label>
+        <input type="text" id="google-sa-path" placeholder="/path/to/service-account.json">
+
+        <label class="checkbox-label">
+            <input type="checkbox" id="google-send-updates">
+            Send calendar invite updates to attendees
+        </label>
+    </div>
+
+    <!-- CalDAV fields -->
+    <div id="fields-caldav" class="hidden">
+        <label for="caldav-url">CalDAV URL</label>
+        <input type="text" id="caldav-url" placeholder="https://caldav.example.com/dav/">
+
+        <div class="btn-group mb-2">
+            <button class="btn btn-sm btn-secondary" onclick="presetCaldav('icloud')">iCloud</button>
+            <button class="btn btn-sm btn-secondary" onclick="presetCaldav('nextcloud')">Nextcloud</button>
+            <button class="btn btn-sm btn-secondary" onclick="presetCaldav('fastmail')">Fastmail</button>
+        </div>
+
+        <label for="caldav-user">Username</label>
+        <input type="text" id="caldav-user" placeholder="user@example.com">
+
+        <label for="caldav-pass">Password</label>
+        <input type="password" id="caldav-pass" placeholder="App-specific password">
+    </div>
+
+    <div class="btn-group mt-2">
+        <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+        <button class="btn btn-primary" onclick="goToStep(3)">Next</button>
+    </div>
+</div>
+
+<!-- Step 3: Test Connection -->
+<div class="card wizard-step" id="step-3">
+    <h2>Test Connection</h2>
+    <p class="text-muted mb-2">Verify your credentials by connecting to the calendar server.</p>
+
+    <button class="btn btn-primary" id="btn-test" onclick="testConnection()">Test Connection</button>
+
+    <div id="test-result" class="mt-2 hidden">
+        <div id="test-success" class="hidden">
+            <p class="text-success mb-1"><strong>Connection successful!</strong></p>
+            <table>
+                <thead>
+                    <tr><th>Name</th><th>Calendar ID</th><th></th></tr>
+                </thead>
+                <tbody id="calendar-list"></tbody>
+            </table>
+        </div>
+        <div id="test-error" class="hidden">
+            <p class="text-error"><strong>Connection failed:</strong> <span id="test-error-msg"></span></p>
+        </div>
+    </div>
+
+    <div class="btn-group mt-2">
+        <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
+        <button class="btn btn-primary hidden" id="btn-to-step4" onclick="goToStep(4)">Next</button>
+    </div>
+</div>
+
+<!-- Step 4: Generate Config -->
+<div class="card wizard-step" id="step-4">
+    <h2>Generated Configuration</h2>
+    <p class="text-muted mb-2">Copy the config snippet for your preferred setup method.</p>
+
+    <div class="tabs">
+        <button class="tab active" onclick="switchTab(this, 'tab-env')">Environment Variables</button>
+        <button class="tab" onclick="switchTab(this, 'tab-dotenv')">.env File</button>
+        <button class="tab" onclick="switchTab(this, 'tab-claude')">Claude Code Config</button>
+    </div>
+
+    <div class="tab-content active" id="tab-env">
+        <div class="code-block-wrapper">
+            <button class="btn-copy" onclick="copyCode('code-env')">Copy</button>
+            <pre><code id="code-env"></code></pre>
+        </div>
+    </div>
+
+    <div class="tab-content" id="tab-dotenv">
+        <div class="code-block-wrapper">
+            <button class="btn-copy" onclick="copyCode('code-dotenv')">Copy</button>
+            <pre><code id="code-dotenv"></code></pre>
+        </div>
+    </div>
+
+    <div class="tab-content" id="tab-claude">
+        <div class="code-block-wrapper">
+            <button class="btn-copy" onclick="copyCode('code-claude')">Copy</button>
+            <pre><code id="code-claude"></code></pre>
+        </div>
+    </div>
+
+    <div class="btn-group mt-2">
+        <button class="btn btn-secondary" onclick="goToStep(3)">Back</button>
+        <button class="btn btn-primary" onclick="saveConfig()">Save .env</button>
+    </div>
+    <div id="save-result" class="mt-1 hidden"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// State
+let currentStep = 1;
+let connectionTested = false;
+let lastConfig = null;
+
+// Provider radio toggle
+document.querySelectorAll('input[name="provider"]').forEach(function(r) {
+    r.addEventListener('change', function() {
+        var isGoogle = r.value === 'google' && r.checked;
+        document.getElementById('fields-google').classList.toggle('hidden', !isGoogle);
+        document.getElementById('fields-caldav').classList.toggle('hidden', isGoogle);
+        document.getElementById('desc-google').classList.toggle('hidden', !isGoogle);
+        document.getElementById('desc-caldav').classList.toggle('hidden', isGoogle);
+    });
+});
+
+// CalDAV presets
+function presetCaldav(service) {
+    var urls = {
+        icloud: 'https://caldav.icloud.com/',
+        nextcloud: 'https://your-server.com/remote.php/dav/',
+        fastmail: 'https://caldav.fastmail.com/dav/calendars/'
+    };
+    document.getElementById('caldav-url').value = urls[service] || '';
+}
+
+// Step navigation
+function goToStep(n) {
+    document.querySelectorAll('.wizard-step').forEach(function(el) { el.classList.remove('active'); });
+    document.getElementById('step-' + n).classList.add('active');
+    for (var i = 1; i <= 4; i++) {
+        var dot = document.getElementById('dot-' + i);
+        dot.classList.remove('active', 'done');
+        if (i < n) dot.classList.add('done');
+        else if (i === n) dot.classList.add('active');
+    }
+    currentStep = n;
+}
+
+// Gather credentials from form
+function gatherCredentials() {
+    var provider = document.querySelector('input[name="provider"]:checked').value;
+    var data = { provider: provider };
+    if (provider === 'google') {
+        data.google_service_account_json = document.getElementById('google-sa-path').value;
+        data.google_send_updates = document.getElementById('google-send-updates').checked ? 'all' : 'none';
+    } else {
+        data.caldav_url = document.getElementById('caldav-url').value;
+        data.caldav_username = document.getElementById('caldav-user').value;
+        data.caldav_password = document.getElementById('caldav-pass').value;
+    }
+    return data;
+}
+
+// HTML-escape helper (uses createTextNode for safe escaping)
+function esc(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(s || ''));
+    return d.textContent;
+}
+
+// Test connection
+async function testConnection() {
+    var btn = document.getElementById('btn-test');
+    btn.disabled = true;
+    btn.textContent = 'Testing...';
+
+    document.getElementById('test-result').classList.remove('hidden');
+    document.getElementById('test-success').classList.add('hidden');
+    document.getElementById('test-error').classList.add('hidden');
+
+    try {
+        var resp = await fetch('/api/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(gatherCredentials()),
+        });
+        var data = await resp.json();
+
+        if (data.success) {
+            connectionTested = true;
+            var tbody = document.getElementById('calendar-list');
+            tbody.textContent = '';
+            data.calendars.forEach(function(c) {
+                var row = document.createElement('tr');
+                var tdName = document.createElement('td');
+                tdName.textContent = c.name;
+                var tdId = document.createElement('td');
+                var code = document.createElement('code');
+                code.textContent = c.id;
+                tdId.appendChild(code);
+                var tdBadge = document.createElement('td');
+                if (c.primary) {
+                    var badge = document.createElement('span');
+                    badge.className = 'badge';
+                    badge.textContent = 'Primary';
+                    tdBadge.appendChild(badge);
+                }
+                row.appendChild(tdName);
+                row.appendChild(tdId);
+                row.appendChild(tdBadge);
+                tbody.appendChild(row);
+            });
+            document.getElementById('test-success').classList.remove('hidden');
+            document.getElementById('btn-to-step4').classList.remove('hidden');
+            generateConfig();
+        } else {
+            document.getElementById('test-error-msg').textContent = data.error;
+            document.getElementById('test-error').classList.remove('hidden');
+        }
+    } catch (e) {
+        document.getElementById('test-error-msg').textContent = e.message;
+        document.getElementById('test-error').classList.remove('hidden');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Test Connection';
+}
+
+// Generate config snippets for step 4
+function generateConfig() {
+    var creds = gatherCredentials();
+    lastConfig = creds;
+
+    var envLines = ['CAL_PROVIDER=' + creds.provider];
+    if (creds.provider === 'google') {
+        envLines.push('GOOGLE_SERVICE_ACCOUNT_JSON=' + (creds.google_service_account_json || ''));
+    } else {
+        envLines.push('CALDAV_URL=' + (creds.caldav_url || ''));
+        envLines.push('CALDAV_USERNAME=' + (creds.caldav_username || ''));
+        envLines.push('CALDAV_PASSWORD=' + (creds.caldav_password || ''));
+    }
+
+    document.getElementById('code-env').textContent = envLines.map(function(l) { return 'export ' + l; }).join('\n');
+    document.getElementById('code-dotenv').textContent = envLines.join('\n');
+
+    var envBlock = {};
+    envLines.forEach(function(l) {
+        var parts = l.split('=');
+        var k = parts[0];
+        var v = parts.slice(1).join('=');
+        envBlock[k] = v;
+    });
+    var claudeConfig = {
+        mcpServers: {
+            calendar: {
+                command: 'cal-provider-mcp',
+                env: envBlock,
+            }
+        }
+    };
+    document.getElementById('code-claude').textContent = JSON.stringify(claudeConfig, null, 2);
+}
+
+// Save .env file
+async function saveConfig() {
+    var creds = gatherCredentials();
+    try {
+        var resp = await fetch('/api/save-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(creds),
+        });
+        var data = await resp.json();
+        var el = document.getElementById('save-result');
+        el.classList.remove('hidden');
+        el.textContent = '';
+        var span = document.createElement('span');
+        if (data.success) {
+            span.className = 'text-success';
+            span.textContent = 'Saved to ' + data.env_file;
+        } else {
+            span.className = 'text-error';
+            span.textContent = data.error;
+        }
+        el.appendChild(span);
+    } catch (e) {
+        var el = document.getElementById('save-result');
+        el.classList.remove('hidden');
+        el.textContent = '';
+        var span = document.createElement('span');
+        span.className = 'text-error';
+        span.textContent = e.message;
+        el.appendChild(span);
+    }
+}
+
+// Tab switching
+function switchTab(tabEl, contentId) {
+    var parent = tabEl.closest('.card') || tabEl.closest('.container');
+    parent.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    parent.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+    tabEl.classList.add('active');
+    document.getElementById(contentId).classList.add('active');
+}
+
+// Copy to clipboard
+function copyCode(elementId) {
+    var text = document.getElementById(elementId).textContent;
+    navigator.clipboard.writeText(text).then(function() {
+        var wrapper = document.getElementById(elementId).closest('.code-block-wrapper');
+        var btn = wrapper.querySelector('.btn-copy');
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+    });
+}
+</script>
+{% endblock %}

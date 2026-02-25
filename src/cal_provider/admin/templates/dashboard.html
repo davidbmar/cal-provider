@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - cal-provider admin{% endblock %}
+
+{% block content %}
+<h1 class="mb-2" style="font-size:1.3rem;">Dashboard</h1>
+
+<!-- Connection Status -->
+<div class="card" id="status-card">
+    <h2>Connection Status</h2>
+    <div id="status-loading" class="text-muted">Checking connection...</div>
+    <div id="status-connected" class="hidden">
+        <div class="status-line">
+            <span class="status-dot status-ok"></span>
+            <strong id="status-provider"></strong>
+        </div>
+        <p class="text-muted">Calendar ID: <code id="status-calendar-id"></code></p>
+    </div>
+    <div id="status-disconnected" class="hidden">
+        <div class="status-line">
+            <span class="status-dot status-error"></span>
+            <span>Not configured</span>
+        </div>
+        <p class="text-muted mt-1">
+            <a href="/setup">Run the setup wizard</a> to connect a calendar provider.
+        </p>
+    </div>
+</div>
+
+<!-- Calendar Explorer -->
+<div class="card" id="explorer-card">
+    <h2>Calendar Explorer</h2>
+    <div id="explorer-placeholder" class="text-muted">Connect a provider to explore calendars.</div>
+    <div id="explorer-content" class="hidden">
+        <table id="calendars-table">
+            <thead>
+                <tr><th>Name</th><th>Calendar ID</th><th></th></tr>
+            </thead>
+            <tbody id="calendars-tbody"></tbody>
+        </table>
+
+        <div id="events-section" class="hidden mt-2">
+            <h3>Events for <code id="events-calendar-id"></code></h3>
+            <div id="events-list"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Test Panel -->
+<div class="card" id="test-card">
+    <h2>Test Panel</h2>
+    <div id="test-placeholder" class="text-muted">Connect a provider to run tests.</div>
+    <div id="test-content" class="hidden">
+        <h3>Check Availability</h3>
+        <label for="avail-cal-id">Calendar ID</label>
+        <input type="text" id="avail-cal-id" placeholder="primary">
+
+        <div style="display:flex;gap:0.75rem">
+            <div style="flex:1">
+                <label for="avail-start">Start</label>
+                <input type="datetime-local" id="avail-start">
+            </div>
+            <div style="flex:1">
+                <label for="avail-end">End</label>
+                <input type="datetime-local" id="avail-end">
+            </div>
+        </div>
+
+        <label for="avail-duration">Duration</label>
+        <select id="avail-duration">
+            <option value="15">15 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60" selected>60 minutes</option>
+            <option value="90">90 minutes</option>
+            <option value="120">120 minutes</option>
+        </select>
+
+        <button class="btn btn-primary mt-1" onclick="checkAvailability()">Check Availability</button>
+
+        <div id="avail-result" class="mt-2 hidden">
+            <table>
+                <thead><tr><th>Start</th><th>End</th><th>Duration</th></tr></thead>
+                <tbody id="avail-tbody"></tbody>
+            </table>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:1.25rem 0">
+
+        <h3>Create Test Event</h3>
+        <p class="text-muted mb-1">Creates a test event, then immediately cancels it. Verifies create + cancel.</p>
+        <label for="test-evt-cal-id">Calendar ID</label>
+        <input type="text" id="test-evt-cal-id" placeholder="primary">
+        <button class="btn btn-primary mt-1" onclick="createTestEvent()">Create Test Event</button>
+        <div id="test-evt-result" class="mt-1 hidden"></div>
+
+        <div class="mt-2">
+            <div class="collapsible-header" onclick="toggleCollapsible(this)">Raw Response</div>
+            <div class="hidden" id="raw-response">
+                <pre id="raw-json"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Init
+document.addEventListener('DOMContentLoaded', async function() {
+    var now = new Date();
+    var today = now.toISOString().slice(0, 10);
+    document.getElementById('avail-start').value = today + 'T09:00';
+    document.getElementById('avail-end').value = today + 'T17:00';
+    await loadStatus();
+});
+
+// HTML-escape helper (uses createTextNode for safe escaping)
+function esc(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(s || ''));
+    return d.textContent;
+}
+
+// Load connection status
+async function loadStatus() {
+    try {
+        var resp = await fetch('/api/status');
+        var data = await resp.json();
+
+        document.getElementById('status-loading').classList.add('hidden');
+
+        if (data.configured) {
+            document.getElementById('status-connected').classList.remove('hidden');
+            document.getElementById('status-provider').textContent =
+                (data.provider === 'google' ? 'Google Calendar' : 'CalDAV') + ' connected';
+            document.getElementById('status-calendar-id').textContent = data.calendar_id || 'none';
+            document.getElementById('avail-cal-id').value = data.calendar_id || '';
+            document.getElementById('test-evt-cal-id').value = data.calendar_id || '';
+
+            document.getElementById('explorer-placeholder').classList.add('hidden');
+            document.getElementById('explorer-content').classList.remove('hidden');
+            document.getElementById('test-placeholder').classList.add('hidden');
+            document.getElementById('test-content').classList.remove('hidden');
+
+            await loadCalendars();
+        } else {
+            document.getElementById('status-disconnected').classList.remove('hidden');
+        }
+    } catch (e) {
+        document.getElementById('status-loading').textContent = 'Failed to load status: ' + e.message;
+    }
+}
+
+// Load calendars
+async function loadCalendars() {
+    try {
+        var resp = await fetch('/api/calendars');
+        var data = await resp.json();
+        if (data.error) return;
+
+        var tbody = document.getElementById('calendars-tbody');
+        tbody.textContent = '';
+        data.calendars.forEach(function(c) {
+            var row = document.createElement('tr');
+            row.classList.add('clickable');
+
+            var tdName = document.createElement('td');
+            tdName.textContent = c.name;
+
+            var tdId = document.createElement('td');
+            var code = document.createElement('code');
+            code.textContent = c.id;
+            tdId.appendChild(code);
+
+            var tdBadge = document.createElement('td');
+            if (c.primary) {
+                var badge = document.createElement('span');
+                badge.className = 'badge';
+                badge.textContent = 'Primary';
+                tdBadge.appendChild(badge);
+            }
+
+            row.appendChild(tdName);
+            row.appendChild(tdId);
+            row.appendChild(tdBadge);
+            row.addEventListener('click', function() { loadEvents(c.id); });
+            tbody.appendChild(row);
+        });
+    } catch (e) {
+        console.error('Failed to load calendars:', e);
+    }
+}
+
+// Load events for a calendar
+async function loadEvents(calendarId) {
+    var now = new Date();
+    var start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    var end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+
+    document.getElementById('events-calendar-id').textContent = calendarId;
+    document.getElementById('events-section').classList.remove('hidden');
+
+    var listEl = document.getElementById('events-list');
+    listEl.textContent = 'Loading...';
+
+    try {
+        var resp = await fetch('/api/events?calendar_id=' + encodeURIComponent(calendarId) +
+            '&start=' + start.toISOString() + '&end=' + end.toISOString());
+        var data = await resp.json();
+
+        listEl.textContent = '';
+
+        if (data.events && data.events.length > 0) {
+            var table = document.createElement('table');
+            var thead = document.createElement('thead');
+            var headerRow = document.createElement('tr');
+            ['Summary', 'Start', 'End', 'Location'].forEach(function(h) {
+                var th = document.createElement('th');
+                th.textContent = h;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            var tbodyEl = document.createElement('tbody');
+            data.events.forEach(function(e) {
+                var row = document.createElement('tr');
+                var tdSummary = document.createElement('td');
+                tdSummary.textContent = e.summary;
+                var tdStart = document.createElement('td');
+                tdStart.textContent = formatTime(e.start);
+                var tdEnd = document.createElement('td');
+                tdEnd.textContent = formatTime(e.end);
+                var tdLoc = document.createElement('td');
+                tdLoc.textContent = e.location || '';
+                row.appendChild(tdSummary);
+                row.appendChild(tdStart);
+                row.appendChild(tdEnd);
+                row.appendChild(tdLoc);
+                tbodyEl.appendChild(row);
+            });
+            table.appendChild(tbodyEl);
+            listEl.appendChild(table);
+        } else {
+            listEl.textContent = 'No events today.';
+        }
+    } catch (e) {
+        listEl.textContent = 'Error: ' + e.message;
+    }
+}
+
+// Check availability
+async function checkAvailability() {
+    var calId = document.getElementById('avail-cal-id').value;
+    var start = document.getElementById('avail-start').value;
+    var end = document.getElementById('avail-end').value;
+    var duration = document.getElementById('avail-duration').value;
+
+    if (!calId || !start || !end) return alert('Fill in all fields.');
+
+    try {
+        var params = new URLSearchParams({
+            calendar_id: calId,
+            start: new Date(start).toISOString(),
+            end: new Date(end).toISOString(),
+            duration_minutes: duration,
+        });
+        var resp = await fetch('/api/available-slots?' + params);
+        var data = await resp.json();
+        showRaw(data);
+
+        var tbody = document.getElementById('avail-tbody');
+        tbody.textContent = '';
+        document.getElementById('avail-result').classList.remove('hidden');
+
+        if (data.slots && data.slots.length > 0) {
+            data.slots.forEach(function(s) {
+                var row = document.createElement('tr');
+                var tdStart = document.createElement('td');
+                tdStart.textContent = formatTime(s.start);
+                var tdEnd = document.createElement('td');
+                tdEnd.textContent = formatTime(s.end);
+                var tdDur = document.createElement('td');
+                tdDur.textContent = s.duration_minutes + 'm';
+                row.appendChild(tdStart);
+                row.appendChild(tdEnd);
+                row.appendChild(tdDur);
+                tbody.appendChild(row);
+            });
+        } else {
+            var row = document.createElement('tr');
+            var td = document.createElement('td');
+            td.setAttribute('colspan', '3');
+            td.className = 'text-muted';
+            td.textContent = 'No available slots found.';
+            row.appendChild(td);
+            tbody.appendChild(row);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+// Create test event
+async function createTestEvent() {
+    var calId = document.getElementById('test-evt-cal-id').value;
+    if (!calId) return alert('Enter a calendar ID.');
+
+    var resultEl = document.getElementById('test-evt-result');
+    resultEl.classList.remove('hidden');
+    resultEl.textContent = 'Creating test event...';
+
+    try {
+        var resp = await fetch('/api/test-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ calendar_id: calId }),
+        });
+        var data = await resp.json();
+        showRaw(data);
+
+        resultEl.textContent = '';
+        var span = document.createElement('span');
+        if (data.success) {
+            span.className = 'text-success';
+            span.textContent = 'Event created (' + data.created_event_id + ') and cancelled: ' + data.cancelled;
+        } else {
+            span.className = 'text-error';
+            span.textContent = data.error;
+        }
+        resultEl.appendChild(span);
+    } catch (e) {
+        resultEl.textContent = '';
+        var span = document.createElement('span');
+        span.className = 'text-error';
+        span.textContent = e.message;
+        resultEl.appendChild(span);
+    }
+}
+
+// Collapsible toggle
+function toggleCollapsible(header) {
+    header.classList.toggle('open');
+    var content = header.nextElementSibling;
+    content.classList.toggle('hidden');
+}
+
+// Show raw JSON
+function showRaw(data) {
+    document.getElementById('raw-json').textContent = JSON.stringify(data, null, 2);
+}
+
+// Format ISO time
+function formatTime(isoStr) {
+    if (!isoStr) return '';
+    var d = new Date(isoStr);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+</script>
+{% endblock %}
