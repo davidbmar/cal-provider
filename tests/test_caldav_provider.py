@@ -2,9 +2,11 @@
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from cal_provider.exceptions import CalendarNotFoundError
 from cal_provider.models import CalendarEvent
 
 # Minimal valid iCalendar data for a single event
@@ -74,6 +76,20 @@ class TestCalDAVProvider:
         assert events[0].location == "Room B"
         assert events[0].attendees == ["dev@example.com"]
 
+    async def test_get_events_with_tz(self, mock_provider):
+        """tz parameter converts event times to target timezone."""
+        mock_event = MagicMock()
+        mock_event.data = SAMPLE_VEVENT_ICAL  # 10:00 UTC
+        mock_provider._mock_cal.date_search.return_value = [mock_event]
+
+        start = datetime(2026, 3, 15, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 3, 16, 0, 0, tzinfo=timezone.utc)
+
+        chicago = ZoneInfo("America/Chicago")
+        events = await mock_provider.get_events("primary", start, end, tz=chicago)
+
+        assert events[0].start.hour == 5  # 10:00 UTC → 5:00 AM CDT
+
     async def test_get_available_slots(self, mock_provider):
         """Events on calendar should create busy intervals."""
         mock_event = MagicMock()
@@ -105,6 +121,21 @@ class TestCalDAVProvider:
         assert len(slots) == 1
         assert slots[0].start == start
         assert slots[0].end == end
+
+    async def test_get_available_slots_with_tz(self, mock_provider):
+        """tz parameter converts slot times to target timezone."""
+        mock_provider._mock_cal.date_search.return_value = []
+
+        start = datetime(2026, 3, 15, 14, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 3, 15, 20, 0, tzinfo=timezone.utc)
+
+        chicago = ZoneInfo("America/Chicago")
+        slots = await mock_provider.get_available_slots(
+            "primary", start, end, 30, tz=chicago
+        )
+
+        assert len(slots) == 1
+        assert slots[0].start.hour == 9  # 14 UTC → 9 AM CDT
 
     async def test_create_event(self, mock_provider):
         mock_created = MagicMock()
@@ -143,3 +174,23 @@ class TestCalDAVProvider:
 
         result = await mock_provider.cancel_event("primary", "bad-url")
         assert result is False
+
+    async def test_calendar_not_found_raises(self, mock_provider):
+        """Looking up a non-existent calendar raises CalendarNotFoundError."""
+        with pytest.raises(CalendarNotFoundError, match="Calendar not found"):
+            await mock_provider.get_events(
+                "nonexistent-cal",
+                datetime(2026, 3, 15, 0, 0, tzinfo=timezone.utc),
+                datetime(2026, 3, 16, 0, 0, tzinfo=timezone.utc),
+            )
+
+    async def test_no_calendars_raises(self, mock_provider):
+        """No calendars on account raises CalendarNotFoundError."""
+        mock_provider._principal.calendars.return_value = []
+
+        with pytest.raises(CalendarNotFoundError, match="No calendars found"):
+            await mock_provider.get_events(
+                "primary",
+                datetime(2026, 3, 15, 0, 0, tzinfo=timezone.utc),
+                datetime(2026, 3, 16, 0, 0, tzinfo=timezone.utc),
+            )

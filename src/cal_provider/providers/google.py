@@ -10,13 +10,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from functools import partial
 from typing import Any
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
+from cal_provider.exceptions import (
+    AuthenticationError,
+    CalendarNotFoundError,
+    EventNotFoundError,
+    PermissionError as CalendarPermissionError,
+)
 from cal_provider.models import CalendarEvent, CalendarInfo, TimeSlot
 from cal_provider.provider import CalendarProvider
 from cal_provider.utils import compute_available_slots
@@ -29,18 +35,28 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 class GoogleCalendarProvider(CalendarProvider):
     """CalendarProvider backed by Google Calendar API v3."""
 
-    def __init__(self, service_account_path: str | None = None) -> None:
+    def __init__(
+        self,
+        service_account_path: str | None = None,
+        send_updates: str = "none",
+    ) -> None:
         sa_path = service_account_path or os.environ.get(
             "GOOGLE_SERVICE_ACCOUNT_JSON", ""
         )
         if not sa_path:
-            raise ValueError(
+            raise AuthenticationError(
                 "Google service account JSON path must be provided via "
                 "constructor argument or GOOGLE_SERVICE_ACCOUNT_JSON env var."
             )
-        self._credentials = Credentials.from_service_account_file(
-            sa_path, scopes=SCOPES
-        )
+        self._send_updates = send_updates
+        try:
+            self._credentials = Credentials.from_service_account_file(
+                sa_path, scopes=SCOPES
+            )
+        except Exception as exc:
+            raise AuthenticationError(
+                f"Failed to load service account credentials: {exc}"
+            ) from exc
         self._service = build(
             "calendar", "v3", credentials=self._credentials
         )
@@ -69,9 +85,16 @@ class GoogleCalendarProvider(CalendarProvider):
 
     async def list_calendars(self) -> list[CalendarInfo]:
         """List all calendars accessible to the service account."""
-        result = await self._run_in_executor(
-            self._service.calendarList().list().execute
-        )
+        from googleapiclient.errors import HttpError
+
+        try:
+            result = await self._run_in_executor(
+                self._service.calendarList().list().execute
+            )
+        except HttpError as exc:
+            if exc.resp.status == 401:
+                raise AuthenticationError(str(exc)) from exc
+            raise
         calendars = []
         for item in result.get("items", []):
             calendars.append(
@@ -90,17 +113,27 @@ class GoogleCalendarProvider(CalendarProvider):
         start: datetime,
         end: datetime,
         duration_minutes: int = 60,
+        tz: tzinfo | None = None,
     ) -> list[TimeSlot]:
         """Query Google freebusy API and derive available slots."""
+        from googleapiclient.errors import HttpError
+
         body = {
             "timeMin": self._to_rfc3339(start),
             "timeMax": self._to_rfc3339(end),
             "items": [{"id": calendar_id}],
         }
 
-        response = await self._run_in_executor(
-            self._service.freebusy().query(body=body).execute
-        )
+        try:
+            response = await self._run_in_executor(
+                self._service.freebusy().query(body=body).execute
+            )
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                raise CalendarNotFoundError(
+                    f"Calendar not found: {calendar_id}"
+                ) from exc
+            raise
 
         busy_intervals: list[dict] = (
             response.get("calendars", {})
@@ -114,26 +147,36 @@ class GoogleCalendarProvider(CalendarProvider):
             b_end = datetime.fromisoformat(interval["end"])
             busy.append((b_start, b_end))
 
-        return compute_available_slots(busy, start, end, duration_minutes)
+        return compute_available_slots(busy, start, end, duration_minutes, tz=tz)
 
     async def get_events(
         self,
         calendar_id: str,
         start: datetime,
         end: datetime,
+        tz: tzinfo | None = None,
     ) -> list[CalendarEvent]:
         """Retrieve events from Google Calendar in a time range."""
-        result = await self._run_in_executor(
-            self._service.events()
-            .list(
-                calendarId=calendar_id,
-                timeMin=self._to_rfc3339(start),
-                timeMax=self._to_rfc3339(end),
-                singleEvents=True,
-                orderBy="startTime",
+        from googleapiclient.errors import HttpError
+
+        try:
+            result = await self._run_in_executor(
+                self._service.events()
+                .list(
+                    calendarId=calendar_id,
+                    timeMin=self._to_rfc3339(start),
+                    timeMax=self._to_rfc3339(end),
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute
             )
-            .execute
-        )
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                raise CalendarNotFoundError(
+                    f"Calendar not found: {calendar_id}"
+                ) from exc
+            raise
 
         events = []
         for item in result.get("items", []):
@@ -146,6 +189,9 @@ class GoogleCalendarProvider(CalendarProvider):
             end_dt = datetime.fromisoformat(
                 event_end.get("dateTime", event_end.get("date", ""))
             )
+            if tz is not None:
+                start_dt = start_dt.astimezone(tz)
+                end_dt = end_dt.astimezone(tz)
             attendee_emails = [
                 a["email"] for a in item.get("attendees", [])
             ]
@@ -165,6 +211,8 @@ class GoogleCalendarProvider(CalendarProvider):
         self, calendar_id: str, event: CalendarEvent
     ) -> dict:
         """Insert an event into the Google Calendar."""
+        from googleapiclient.errors import HttpError
+
         body: dict[str, Any] = {
             "summary": event.summary,
             "start": {"dateTime": self._to_rfc3339(event.start)},
@@ -179,15 +227,26 @@ class GoogleCalendarProvider(CalendarProvider):
                 {"email": addr} for addr in event.attendees
             ]
 
-        result = await self._run_in_executor(
-            self._service.events()
-            .insert(
-                calendarId=calendar_id,
-                body=body,
-                sendUpdates="all",
+        try:
+            result = await self._run_in_executor(
+                self._service.events()
+                .insert(
+                    calendarId=calendar_id,
+                    body=body,
+                    sendUpdates=self._send_updates,
+                )
+                .execute
             )
-            .execute
-        )
+        except HttpError as exc:
+            if exc.resp.status == 403:
+                raise CalendarPermissionError(
+                    f"Permission denied creating event on {calendar_id}: {exc}"
+                ) from exc
+            if exc.resp.status == 404:
+                raise CalendarNotFoundError(
+                    f"Calendar not found: {calendar_id}"
+                ) from exc
+            raise
 
         logger.info("Created event %s on calendar %s", result["id"], calendar_id)
 
@@ -201,6 +260,8 @@ class GoogleCalendarProvider(CalendarProvider):
         self, calendar_id: str, event_id: str
     ) -> bool:
         """Delete an event from Google Calendar."""
+        from googleapiclient.errors import HttpError
+
         try:
             await self._run_in_executor(
                 self._service.events()
@@ -211,6 +272,17 @@ class GoogleCalendarProvider(CalendarProvider):
                 "Cancelled event %s on calendar %s", event_id, calendar_id
             )
             return True
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                raise EventNotFoundError(
+                    f"Event not found: {event_id}"
+                ) from exc
+            logger.exception(
+                "Failed to cancel event %s on calendar %s",
+                event_id,
+                calendar_id,
+            )
+            return False
         except Exception:
             logger.exception(
                 "Failed to cancel event %s on calendar %s",

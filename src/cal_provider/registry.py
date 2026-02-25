@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from cal_provider.exceptions import CalendarProviderError
 from cal_provider.provider import CalendarProvider
 
 logger = logging.getLogger(__name__)

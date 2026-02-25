@@ -1,7 +1,6 @@
 """Shared test fixtures for cal-provider."""
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from datetime import datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -24,18 +23,31 @@ class MockCalendarProvider(CalendarProvider):
         return list(self.calendars)
 
     async def get_available_slots(
-        self, calendar_id, start, end, duration_minutes=60
+        self, calendar_id, start, end, duration_minutes=60, tz=None
     ) -> list[TimeSlot]:
         from cal_provider.utils import compute_available_slots
 
         busy = [(e.start, e.end) for e in self.events]
-        return compute_available_slots(busy, start, end, duration_minutes)
+        return compute_available_slots(busy, start, end, duration_minutes, tz=tz)
 
-    async def get_events(self, calendar_id, start, end) -> list[CalendarEvent]:
-        return [
+    async def get_events(self, calendar_id, start, end, tz=None) -> list[CalendarEvent]:
+        results = [
             e for e in self.events
             if e.start < end and e.end > start
         ]
+        if tz is not None:
+            results = [
+                CalendarEvent(
+                    summary=e.summary,
+                    start=e.start.astimezone(tz),
+                    end=e.end.astimezone(tz),
+                    description=e.description,
+                    attendees=list(e.attendees),
+                    location=e.location,
+                )
+                for e in results
+            ]
+        return results
 
     async def create_event(self, calendar_id, event) -> dict:
         self.events.append(event)

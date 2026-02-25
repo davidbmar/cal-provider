@@ -5,7 +5,7 @@ Defines the interface for calendar operations. Any calendar backend
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 from cal_provider.models import CalendarEvent, CalendarInfo, TimeSlot
 
@@ -32,6 +32,7 @@ class CalendarProvider(ABC):
         start: datetime,
         end: datetime,
         duration_minutes: int = 60,
+        tz: tzinfo | None = None,
     ) -> list[TimeSlot]:
         """Return available time slots within the given range.
 
@@ -40,6 +41,7 @@ class CalendarProvider(ABC):
             start: Beginning of the search window.
             end: End of the search window.
             duration_minutes: Minimum slot length in minutes.
+            tz: If provided, returned slots use this timezone.
 
         Returns:
             List of TimeSlot objects that are free and at least
@@ -52,6 +54,7 @@ class CalendarProvider(ABC):
         calendar_id: str,
         start: datetime,
         end: datetime,
+        tz: tzinfo | None = None,
     ) -> list[CalendarEvent]:
         """Retrieve events within a time range.
 
@@ -59,6 +62,7 @@ class CalendarProvider(ABC):
             calendar_id: The calendar to query.
             start: Beginning of the search window.
             end: End of the search window.
+            tz: If provided, returned events use this timezone.
 
         Returns:
             List of CalendarEvent objects in the range.

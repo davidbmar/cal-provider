@@ -1,6 +1,7 @@
 """Tests for cal_provider.utils — busy→available slot inversion."""
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from cal_provider.models import TimeSlot
 from cal_provider.utils import compute_available_slots
@@ -136,3 +137,27 @@ class TestComputeAvailableSlots:
             start=datetime(2026, 3, 15, 13, 0, tzinfo=timezone.utc),
             end=end,
         )
+
+    def test_tz_converts_to_target_timezone(self):
+        """tz parameter converts slot times to the given timezone."""
+        start = datetime(2026, 3, 15, 14, 0, tzinfo=timezone.utc)  # 2 PM UTC
+        end = datetime(2026, 3, 15, 20, 0, tzinfo=timezone.utc)    # 8 PM UTC
+
+        chicago = ZoneInfo("America/Chicago")
+        slots = compute_available_slots([], start, end, 30, tz=chicago)
+
+        assert len(slots) == 1
+        # March 15 — CDT (UTC-5)
+        assert slots[0].start.hour == 9  # 14 UTC → 9 AM CDT
+        assert slots[0].end.hour == 15   # 20 UTC → 3 PM CDT
+        assert slots[0].start.tzinfo is not None
+
+    def test_tz_none_returns_original_timezone(self):
+        """tz=None (default) returns slots in original timezone."""
+        start = datetime(2026, 3, 15, 9, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 3, 15, 18, 0, tzinfo=timezone.utc)
+
+        slots = compute_available_slots([], start, end, 30, tz=None)
+
+        assert len(slots) == 1
+        assert slots[0].start.tzinfo == timezone.utc

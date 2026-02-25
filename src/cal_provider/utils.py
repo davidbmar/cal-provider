@@ -1,6 +1,6 @@
 """Shared utilities for calendar providers."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 from cal_provider.models import TimeSlot
 
@@ -10,6 +10,7 @@ def compute_available_slots(
     window_start: datetime,
     window_end: datetime,
     duration_minutes: int = 60,
+    tz: tzinfo | None = None,
 ) -> list[TimeSlot]:
     """Invert busy intervals into available time slots.
 
@@ -22,6 +23,7 @@ def compute_available_slots(
         window_start: Beginning of the search window.
         window_end: End of the search window.
         duration_minutes: Minimum slot length in minutes.
+        tz: If provided, returned slots are converted to this timezone.
 
     Returns:
         List of TimeSlot objects representing available windows.
@@ -51,5 +53,12 @@ def compute_available_slots(
         gap = window_end - cursor
         if gap >= min_duration:
             available.append(TimeSlot(start=cursor, end=window_end))
+
+    # Convert to target timezone if requested
+    if tz is not None:
+        available = [
+            TimeSlot(start=s.start.astimezone(tz), end=s.end.astimezone(tz))
+            for s in available
+        ]
 
     return available

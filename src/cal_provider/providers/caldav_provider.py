@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from functools import partial
 from typing import Any
 
@@ -16,6 +16,7 @@ import caldav
 from icalendar import Calendar as iCalendar
 from icalendar import Event as iEvent
 
+from cal_provider.exceptions import CalendarNotFoundError, EventNotFoundError
 from cal_provider.models import CalendarEvent, CalendarInfo, TimeSlot
 from cal_provider.provider import CalendarProvider
 from cal_provider.utils import compute_available_slots
@@ -57,7 +58,7 @@ class CalDAVProvider(CalendarProvider):
         """
         calendars = self._principal.calendars()
         if not calendars:
-            raise ValueError("No calendars found on this CalDAV account")
+            raise CalendarNotFoundError("No calendars found on this CalDAV account")
 
         if calendar_id == "primary":
             return calendars[0]
@@ -66,7 +67,7 @@ class CalDAVProvider(CalendarProvider):
             if calendar_id in (str(cal.url), cal.name):
                 return cal
 
-        raise ValueError(f"Calendar not found: {calendar_id}")
+        raise CalendarNotFoundError(f"Calendar not found: {calendar_id}")
 
     @staticmethod
     def _parse_vevent(vevent) -> tuple[datetime, datetime, dict]:
@@ -137,6 +138,7 @@ class CalDAVProvider(CalendarProvider):
         start: datetime,
         end: datetime,
         duration_minutes: int = 60,
+        tz: tzinfo | None = None,
     ) -> list[TimeSlot]:
         """Fetch events and compute available gaps."""
         cal = await self._run_in_executor(self._get_calendar, calendar_id)
@@ -152,13 +154,14 @@ class CalDAVProvider(CalendarProvider):
                     evt_start, evt_end, _ = self._parse_vevent(component)
                     busy.append((evt_start, evt_end))
 
-        return compute_available_slots(busy, start, end, duration_minutes)
+        return compute_available_slots(busy, start, end, duration_minutes, tz=tz)
 
     async def get_events(
         self,
         calendar_id: str,
         start: datetime,
         end: datetime,
+        tz: tzinfo | None = None,
     ) -> list[CalendarEvent]:
         """Retrieve events from the CalDAV calendar."""
         cal = await self._run_in_executor(self._get_calendar, calendar_id)
@@ -172,6 +175,9 @@ class CalDAVProvider(CalendarProvider):
             for component in ical.walk():
                 if component.name == "VEVENT":
                     evt_start, evt_end, meta = self._parse_vevent(component)
+                    if tz is not None:
+                        evt_start = evt_start.astimezone(tz)
+                        evt_end = evt_end.astimezone(tz)
                     result.append(
                         CalendarEvent(
                             summary=meta["summary"],
@@ -232,6 +238,12 @@ class CalDAVProvider(CalendarProvider):
                 "Cancelled CalDAV event %s on %s", event_id, calendar_id
             )
             return True
+        except (CalendarNotFoundError, EventNotFoundError):
+            raise
+        except caldav.error.NotFoundError as exc:
+            raise EventNotFoundError(
+                f"Event not found: {event_id}"
+            ) from exc
         except Exception:
             logger.exception(
                 "Failed to cancel CalDAV event %s on %s",

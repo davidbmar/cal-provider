@@ -2,6 +2,7 @@
 
 import pytest
 
+from cal_provider.exceptions import AuthenticationError
 from cal_provider.provider import CalendarProvider
 from cal_provider.registry import _registry, get_provider, register_provider
 
@@ -21,8 +22,8 @@ class TestRegistry:
 
     def test_google_lazy_registration(self):
         """get_provider('google') lazily imports GoogleCalendarProvider."""
-        # This will raise ValueError (no SA path) but proves the import works
-        with pytest.raises(ValueError, match="service account JSON"):
+        # This will raise AuthenticationError (no SA path) but proves the import works
+        with pytest.raises(AuthenticationError, match="service account JSON"):
             get_provider("google")
         # Cleanup the registered entry so other tests aren't affected
         _registry.pop("google", None)
