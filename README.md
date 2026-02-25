@@ -395,7 +395,7 @@ pip install -e ".[all]"
 python -m pytest tests/ -v
 ```
 
-83 tests, all mocked (no credentials needed). Uses `pytest-asyncio` with `asyncio_mode = auto`.
+84 tests, all mocked (no credentials needed). Uses `pytest-asyncio` with `asyncio_mode = auto`.
 
 ```bash
 pip install -e ".[all]" && pip install pytest pytest-asyncio

@@ -22,5 +22,5 @@ class EventNotFoundError(CalendarProviderError):
     """The requested event_id does not exist."""
 
 
-class PermissionError(CalendarProviderError):
+class CalendarPermissionError(CalendarProviderError):
     """Insufficient permissions (e.g. sendUpdates on service account, no write access)."""

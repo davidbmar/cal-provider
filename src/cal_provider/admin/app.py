@@ -123,13 +123,7 @@ async def test_connection(req: ConnectionRequest):
 # POST /api/save-config
 # ---------------------------------------------------------------------------
 
-class SaveConfigRequest(BaseModel):
-    provider: str
-    google_service_account_json: str | None = None
-    google_send_updates: str = "none"
-    caldav_url: str | None = None
-    caldav_username: str | None = None
-    caldav_password: str | None = None
+class SaveConfigRequest(ConnectionRequest):
     output_dir: str = "."
 
 
@@ -140,6 +134,8 @@ async def save_config(req: SaveConfigRequest):
 
     if req.provider == "google":
         lines.append(f"GOOGLE_SERVICE_ACCOUNT_JSON={req.google_service_account_json or ''}")
+        if req.google_send_updates != "none":
+            lines.append(f"GOOGLE_SEND_UPDATES={req.google_send_updates}")
     elif req.provider == "caldav":
         lines.append(f"CALDAV_URL={req.caldav_url or ''}")
         lines.append(f"CALDAV_USERNAME={req.caldav_username or ''}")

@@ -7,7 +7,7 @@ from cal_provider.exceptions import (
     CalendarNotFoundError,
     CalendarProviderError,
     EventNotFoundError,
-    PermissionError,
+    CalendarPermissionError,
 )
 
 
@@ -18,7 +18,7 @@ class TestExceptionHierarchy:
             AuthenticationError,
             CalendarNotFoundError,
             EventNotFoundError,
-            PermissionError,
+            CalendarPermissionError,
         ]:
             assert issubclass(exc_class, CalendarProviderError)
 
@@ -31,7 +31,7 @@ class TestExceptionHierarchy:
             AuthenticationError,
             CalendarNotFoundError,
             EventNotFoundError,
-            PermissionError,
+            CalendarPermissionError,
         ]:
             with pytest.raises(CalendarProviderError):
                 raise exc_class("test message")
@@ -47,8 +47,8 @@ class TestExceptionHierarchy:
         with pytest.raises(EventNotFoundError):
             raise EventNotFoundError("no such event")
 
-        with pytest.raises(PermissionError):
-            raise PermissionError("no write access")
+        with pytest.raises(CalendarPermissionError):
+            raise CalendarPermissionError("no write access")
 
     def test_message_preserved(self):
         exc = AuthenticationError("expired token")

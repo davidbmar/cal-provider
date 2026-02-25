@@ -21,7 +21,7 @@ from cal_provider.exceptions import (
     AuthenticationError,
     CalendarNotFoundError,
     EventNotFoundError,
-    PermissionError as CalendarPermissionError,
+    CalendarPermissionError,
 )
 from cal_provider.models import CalendarEvent, CalendarInfo, TimeSlot
 from cal_provider.provider import CalendarProvider
